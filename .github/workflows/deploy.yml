@@ -1,0 +1,73 @@
+name: Deploy to Cloud Functions
+
+on:
+  push:
+    branches: [ main, master ]
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  FUNCTION_NAME: nodejs-hello-function
+  REGION: us-central1
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Run tests
+      run: npm test
+
+    - name: Set up Google Cloud CLI
+      uses: google-github-actions/setup-gcloud@v1
+      with:
+        service_account_key: ${{ secrets.GCP_SA_KEY }}
+        project_id: ${{ secrets.GCP_PROJECT_ID }}
+        export_default_credentials: true
+
+    - name: Enable Cloud Functions API
+      run: |
+        gcloud services enable cloudfunctions.googleapis.com
+        gcloud services enable cloudbuild.googleapis.com
+
+    - name: Deploy to Cloud Functions
+      run: |
+        gcloud functions deploy $FUNCTION_NAME \
+          --source=. \
+          --entry-point=helloWorld \
+          --runtime=nodejs18 \
+          --trigger=http \
+          --allow-unauthenticated \
+          --region=$REGION \
+          --memory=256MB \
+          --timeout=60s \
+          --max-instances=10 \
+          --set-env-vars NODE_ENV=production
+
+    - name: Get function URL
+      run: |
+        FUNCTION_URL=$(gcloud functions describe $FUNCTION_NAME --region=$REGION --format='value(httpsTrigger.url)')
+        echo "🎉 Function deployed successfully!"
+        echo "📡 Function URL: $FUNCTION_URL"
+        echo "🔗 Test endpoints:"
+        echo "   Health check: $FUNCTION_URL"
+        echo "   Hello API: $FUNCTION_URL/api/hello?name=YourName"
+        echo "   Data API: $FUNCTION_URL/api/data (POST)"
+        echo "FUNCTION_URL=$FUNCTION_URL" >> $GITHUB_ENV
+
+    - name: Test deployment
+      run: |
+        echo "🧪 Testing deployment..."
+        curl -f $FUNCTION_URL || exit 1
+        echo "✅ Deployment test passed!"
